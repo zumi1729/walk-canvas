@@ -1,4 +1,4 @@
-const CACHE_NAME = "walk-canvas-v5";
+const CACHE_NAME = "walk-canvas-v6";
 const BASE_PATH = new URL("./", self.location.href).pathname;
 const APP_SHELL = [
   BASE_PATH,

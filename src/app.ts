@@ -7,6 +7,7 @@ import {
   getAllVisitedCells,
   getAllWalkSessions,
   initDb,
+  updatePhotoNote,
   updateWalkSession,
   upsertVisitedCell,
 } from "./db/db";
@@ -37,6 +38,7 @@ import {
 } from "./ui/controls";
 import { showCameraModal, showPhotoCommentModal, showPhotoDetailModal } from "./ui/modal";
 import { showWalkHistoryModal } from "./ui/history";
+import { showPhotoLibraryModal } from "./ui/photoLibrary";
 import { showToast } from "./ui/toast";
 
 const MAX_RECORDING_ACCURACY_METERS = 35;
@@ -94,6 +96,7 @@ function bindControls(): void {
   controls.cameraButton.addEventListener("click", () => void handleCameraButton());
   controls.locateButton.addEventListener("click", () => void locateUser(true));
   controls.historyButton.addEventListener("click", openWalkHistory);
+  controls.photoLibraryButton.addEventListener("click", openPhotoArchive);
   controls.cameraInput.addEventListener("change", () => void handleSelectedPhoto());
 }
 
@@ -332,27 +335,70 @@ async function processPhoto(file: File): Promise<void> {
 
 function openWalkHistory(): void {
   showWalkHistoryModal({
-    sessions: [...walkSessions.values()],
+    getSessions: () => [...walkSessions.values()],
     getPhotos: (session) => getPhotosForSession(session, [...photoNotes.values()]),
     onRenderRoute: (session, notes) => renderHistoryMap("historyMap", session, notes),
     onClearRoute: clearHistoryMap,
-    onOpenPhoto: openPhotoDetails,
+    onOpenPhoto: (note, onChanged) => openPhotoDetails(note, onChanged),
+    onUpdateSession: async (session) => {
+      const currentSession = state.currentSession?.id === session.id ? state.currentSession : undefined;
+      const previousMetadata = currentSession
+        ? { isFavorite: currentSession.isFavorite, tags: currentSession.tags }
+        : undefined;
+      try {
+        const sessionToSave = currentSession ? Object.assign(currentSession, session) : session;
+        await updateWalkSession(sessionToSave);
+        walkSessions.set(session.id, sessionToSave);
+        showToast("散歩の情報を保存しました。");
+      } catch (error) {
+        if (currentSession && previousMetadata) {
+          currentSession.isFavorite = previousMetadata.isFavorite;
+          currentSession.tags = previousMetadata.tags;
+        }
+        console.error(error);
+        showToast("散歩の情報を保存できませんでした。", 5000);
+        throw error;
+      }
+    },
   });
 }
 
-function openPhotoDetails(note: PhotoNote): void {
-  showPhotoDetailModal(note, async () => {
-    try {
-      await deletePhotoNote(note.id);
-      photoNotes.delete(note.id);
-      removePhotoMarker(note.id);
-      updateStats();
-      showToast("写真を削除しました。");
-    } catch (error) {
-      console.error(error);
-      showToast("写真を削除できませんでした。", 5000);
-      throw error;
-    }
+function openPhotoArchive(): void {
+  showPhotoLibraryModal({
+    getNotes: () => [...photoNotes.values()],
+    onOpenPhoto: (note, onChanged) => openPhotoDetails(note, onChanged),
+  });
+}
+
+function openPhotoDetails(note: PhotoNote, onChanged?: () => void): void {
+  showPhotoDetailModal(note, {
+    onDelete: async (currentNote) => {
+      try {
+        await deletePhotoNote(currentNote.id);
+        photoNotes.delete(currentNote.id);
+        removePhotoMarker(currentNote.id);
+        updateStats();
+        onChanged?.();
+        showToast("写真を削除しました。");
+      } catch (error) {
+        console.error(error);
+        showToast("写真を削除できませんでした。", 5000);
+        throw error;
+      }
+    },
+    onUpdate: async (updatedNote) => {
+      try {
+        await updatePhotoNote(updatedNote);
+        photoNotes.set(updatedNote.id, updatedNote);
+        addPhotoMarker(map, updatedNote, openPhotoDetails);
+        onChanged?.();
+        showToast("写真の情報を保存しました。");
+      } catch (error) {
+        console.error(error);
+        showToast("写真の情報を保存できませんでした。", 5000);
+        throw error;
+      }
+    },
   });
 }
 
@@ -432,6 +478,10 @@ function renderAppShell(): void {
         </div>
         <div class="header-actions">
           <span id="trackingStatus" class="status-pill">停止中</span>
+          <button id="photoLibraryButton" class="history-button" type="button" aria-label="写真一覧を開く">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm0 2v9.2l3.8-3.8 2.7 2.7 4.2-5.1 5.3 6.4V6H4Zm3 4a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"/></svg>
+            <span>写真</span>
+          </button>
           <button id="historyButton" class="history-button" type="button" aria-label="散歩履歴を開く">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 8.5 6H18a6.7 6.7 0 1 1-1.5-2.5L14 9h7V2l-2.8 2.8A8.9 8.9 0 0 0 12 3Zm-1 4v6l4.6 2.7 1-1.7-3.6-2.1V7h-2Z"/></svg>
             <span>履歴</span>
@@ -486,6 +536,10 @@ function renderAppShell(): void {
               <div><p class="eyebrow">WALK ARCHIVE</p><h2>散歩の記録</h2></div>
               <button id="historyCloseButton" class="icon-close-button" type="button" aria-label="閉じる">×</button>
             </header>
+            <div class="archive-filter-bar">
+              <select id="historyTagFilter" aria-label="タグで散歩を絞り込む"></select>
+              <button id="historyFavoriteFilter" class="archive-favorite-filter" type="button" aria-pressed="false">☆ お気に入り</button>
+            </div>
             <div id="historyList" class="history-list"></div>
           </section>
 
@@ -506,6 +560,15 @@ function renderAppShell(): void {
               <div><strong id="historyDetailCells">0マス</strong><span>歩いたマス</span></div>
             </div>
 
+            <div class="archive-metadata-editor">
+              <button id="historyDetailFavorite" class="archive-favorite-button" type="button" aria-pressed="false">☆ お気に入り</button>
+              <div class="archive-tag-editor">
+                <input id="historyDetailTagsInput" type="text" maxlength="240" placeholder="タグをカンマ区切りで入力" />
+                <button id="historyDetailTagsSave" type="button">保存</button>
+              </div>
+              <div id="historyDetailTags" class="archive-tag-chips"></div>
+            </div>
+
             <div class="history-map-wrap">
               <div id="historyMap" aria-label="この散歩のルート"></div>
               <p id="historyEmptyRoute" class="history-empty-route" hidden>表示できるGPSルートがありません</p>
@@ -515,6 +578,22 @@ function renderAppShell(): void {
               <h3>この散歩の写真</h3>
               <div id="historyPhotoGrid" class="history-photo-grid"></div>
             </section>
+          </section>
+        </div>
+      </dialog>
+
+      <dialog id="photoLibraryDialog" class="modal history-modal">
+        <div class="history-shell">
+          <section class="history-view">
+            <header class="history-header">
+              <div><p class="eyebrow">PHOTO ARCHIVE</p><h2>写真一覧</h2></div>
+              <button id="photoLibraryCloseButton" class="icon-close-button" type="button" aria-label="閉じる">×</button>
+            </header>
+            <div class="archive-filter-bar">
+              <select id="photoTagFilter" aria-label="タグで写真を絞り込む"></select>
+              <button id="photoFavoriteFilter" class="archive-favorite-filter" type="button" aria-pressed="false">☆ お気に入り</button>
+            </div>
+            <div id="photoLibraryContent" class="photo-library-content"></div>
           </section>
         </div>
       </dialog>
@@ -546,6 +625,14 @@ function renderAppShell(): void {
           <div class="detail-copy">
             <p id="detailComment" class="detail-comment"></p>
             <time id="detailDate" class="detail-date"></time>
+            <div class="archive-metadata-editor photo-metadata-editor">
+              <button id="detailFavoriteButton" class="archive-favorite-button" type="button" aria-pressed="false">☆ お気に入り</button>
+              <div class="archive-tag-editor">
+                <input id="detailTagsInput" type="text" maxlength="240" placeholder="タグをカンマ区切りで入力" />
+                <button id="detailTagsSaveButton" type="button">保存</button>
+              </div>
+              <div id="detailTags" class="archive-tag-chips"></div>
+            </div>
           </div>
           <div class="modal-actions">
             <button id="deletePhotoButton" class="delete-button" type="button">削除</button>

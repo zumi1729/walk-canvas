@@ -10,6 +10,8 @@ export type VisitedCell = {
 export type PhotoNote = {
   id: string;
   sessionId?: string;
+  isFavorite?: boolean;
+  tags?: string[];
   lat: number;
   lng: number;
   cellId: string;
@@ -28,6 +30,8 @@ export type WalkPoint = {
 
 export type WalkSession = {
   id: string;
+  isFavorite?: boolean;
+  tags?: string[];
   startedAt: string;
   endedAt?: string;
   visitedCellIds: string[];

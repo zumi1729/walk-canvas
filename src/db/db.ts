@@ -68,6 +68,10 @@ export async function addPhotoNote(note: PhotoNote): Promise<void> {
   await (await initDb()).add("photoNotes", note);
 }
 
+export async function updatePhotoNote(note: PhotoNote): Promise<void> {
+  await (await initDb()).put("photoNotes", note);
+}
+
 export async function deletePhotoNote(id: string): Promise<void> {
   await (await initDb()).delete("photoNotes", id);
 }

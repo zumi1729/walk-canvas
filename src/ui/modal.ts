@@ -1,4 +1,5 @@
 import type { PhotoNote } from "../db/types";
+import { normalizeTags } from "../library/metadata";
 
 export type CameraModalAction = "capture" | "library" | null;
 
@@ -132,14 +133,24 @@ export function showPhotoCommentModal(previewUrl: string): Promise<string | null
   });
 }
 
-export function showPhotoDetailModal(note: PhotoNote, onDelete: () => Promise<void>): void {
+type PhotoDetailOptions = {
+  onDelete: (note: PhotoNote) => Promise<void>;
+  onUpdate: (note: PhotoNote) => Promise<void>;
+};
+
+export function showPhotoDetailModal(note: PhotoNote, options: PhotoDetailOptions): void {
   const dialog = requireDialog("#photoDetailDialog");
   const image = requireElement<HTMLImageElement>(dialog, "#detailPhoto");
   const comment = requireElement<HTMLElement>(dialog, "#detailComment");
   const date = requireElement<HTMLElement>(dialog, "#detailDate");
+  const favoriteButton = requireElement<HTMLButtonElement>(dialog, "#detailFavoriteButton");
+  const tagsInput = requireElement<HTMLInputElement>(dialog, "#detailTagsInput");
+  const tagsSaveButton = requireElement<HTMLButtonElement>(dialog, "#detailTagsSaveButton");
+  const tags = requireElement<HTMLElement>(dialog, "#detailTags");
   const deleteButton = requireElement<HTMLButtonElement>(dialog, "#deletePhotoButton");
   const closeButton = requireElement<HTMLButtonElement>(dialog, "#detailCloseButton");
   const imageUrl = URL.createObjectURL(note.imageBlob);
+  let currentNote = note;
 
   image.src = imageUrl;
   comment.textContent = note.comment || "コメントなし";
@@ -149,12 +160,48 @@ export function showPhotoDetailModal(note: PhotoNote, onDelete: () => Promise<vo
     timeStyle: "short",
   }).format(new Date(note.createdAt));
 
+  const renderMetadata = () => {
+    favoriteButton.classList.toggle("is-active", Boolean(currentNote.isFavorite));
+    favoriteButton.setAttribute("aria-pressed", String(Boolean(currentNote.isFavorite)));
+    favoriteButton.textContent = currentNote.isFavorite ? "★ お気に入り" : "☆ お気に入り";
+    tagsInput.value = (currentNote.tags ?? []).join(", ");
+    renderTagChips(tags, currentNote.tags ?? []);
+  };
+
+  favoriteButton.onclick = async () => {
+    favoriteButton.disabled = true;
+    try {
+      const updated = { ...currentNote, isFavorite: !currentNote.isFavorite };
+      await options.onUpdate(updated);
+      currentNote = updated;
+      renderMetadata();
+    } catch {
+      // The caller displays the persistence error.
+    } finally {
+      favoriteButton.disabled = false;
+    }
+  };
+  tagsSaveButton.onclick = async () => {
+    tagsSaveButton.disabled = true;
+    try {
+      const updated = { ...currentNote, tags: normalizeTags(tagsInput.value) };
+      await options.onUpdate(updated);
+      currentNote = updated;
+      renderMetadata();
+    } catch {
+      // The caller displays the persistence error.
+    } finally {
+      tagsSaveButton.disabled = false;
+    }
+  };
+  renderMetadata();
+
   deleteButton.disabled = false;
   deleteButton.onclick = async () => {
     if (!window.confirm("この写真を削除しますか？")) return;
     deleteButton.disabled = true;
     try {
-      await onDelete();
+      await options.onDelete(currentNote);
       dialog.close();
     } catch {
       // The caller reports the persistence error and the modal stays open.
@@ -168,6 +215,15 @@ export function showPhotoDetailModal(note: PhotoNote, onDelete: () => Promise<vo
     URL.revokeObjectURL(imageUrl);
   };
   dialog.showModal();
+}
+
+function renderTagChips(container: HTMLElement, tags: string[]): void {
+  container.replaceChildren();
+  for (const tag of tags) {
+    const chip = document.createElement("span");
+    chip.textContent = `#${tag}`;
+    container.append(chip);
+  }
 }
 
 function requireDialog(selector: string): HTMLDialogElement {
