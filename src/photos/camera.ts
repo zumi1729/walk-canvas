@@ -1,5 +1,7 @@
 let activeStream: MediaStream | undefined;
 
+export type CameraFacingMode = "environment" | "user";
+
 export function openPhotoLibrary(input: HTMLInputElement): void {
   input.value = "";
   input.click();
@@ -11,7 +13,10 @@ export function getSelectedPhoto(input: HTMLInputElement): File | undefined {
   return file;
 }
 
-export async function startCamera(video: HTMLVideoElement): Promise<void> {
+export async function startCamera(
+  video: HTMLVideoElement,
+  facingMode: CameraFacingMode = "environment",
+): Promise<void> {
   if (!navigator.mediaDevices?.getUserMedia) {
     throw new Error("このブラウザではアプリ内カメラを使えません。写真ライブラリから選択してください。");
   }
@@ -20,7 +25,7 @@ export async function startCamera(video: HTMLVideoElement): Promise<void> {
   activeStream = await navigator.mediaDevices.getUserMedia({
     audio: false,
     video: {
-      facingMode: { ideal: "environment" },
+      facingMode: { ideal: facingMode },
       width: { ideal: 1920 },
       height: { ideal: 1080 },
     },

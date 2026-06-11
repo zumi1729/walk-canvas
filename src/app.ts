@@ -18,6 +18,7 @@ import { initMap, moveToPoint, updateCurrentPosition } from "./map/map";
 import { addPhotoMarker, removePhotoMarker, renderPhotoMarkers } from "./map/photoMarkers";
 import {
   captureCameraPhoto,
+  type CameraFacingMode,
   getCameraErrorMessage,
   getSelectedPhoto,
   openPhotoLibrary,
@@ -228,18 +229,39 @@ async function handleCameraButton(): Promise<void> {
   setControlsBusy(controls, true);
   const modal = showCameraModal(() => openPhotoLibrary(controls.cameraInput));
   let cameraStarted = false;
+  let facingMode: CameraFacingMode = "environment";
+  let cameraRequestId = 0;
 
-  try {
-    await startCamera(modal.video);
-    cameraStarted = true;
-    modal.setCameraReady();
-  } catch (error) {
-    console.error(error);
-    stopCamera(modal.video);
-    modal.setCameraError(getCameraErrorMessage(error));
-  }
+  const activateCamera = async (nextFacingMode: CameraFacingMode): Promise<void> => {
+    const requestId = ++cameraRequestId;
+    facingMode = nextFacingMode;
+    cameraStarted = false;
+    modal.setCameraLoading(nextFacingMode === "user" ? "内側カメラへ切り替えています…" : "カメラを準備しています…");
+
+    try {
+      await startCamera(modal.video, nextFacingMode);
+      if (requestId !== cameraRequestId || !modal.isOpen()) {
+        stopCamera(modal.video);
+        return;
+      }
+      cameraStarted = true;
+      modal.setCameraReady(nextFacingMode === "user");
+    } catch (error) {
+      if (requestId !== cameraRequestId || !modal.isOpen()) return;
+      console.error(error);
+      stopCamera(modal.video);
+      modal.setCameraError(getCameraErrorMessage(error));
+    }
+  };
+
+  modal.setSwitchHandler(() => {
+    const nextFacingMode = facingMode === "environment" ? "user" : "environment";
+    void activateCamera(nextFacingMode);
+  });
+  await activateCamera(facingMode);
 
   const action = await modal.result;
+  cameraRequestId += 1;
   try {
     if (action === "capture" && cameraStarted) {
       const file = await captureCameraPhoto(modal.video);
@@ -437,6 +459,11 @@ function renderAppShell(): void {
           <div class="camera-viewport">
             <video id="cameraPreview" autoplay muted playsinline></video>
             <p id="cameraStatus" class="camera-status">カメラを準備しています…</p>
+            <button id="cameraSwitchButton" class="camera-switch-button" type="button" aria-label="内側と外側のカメラを切り替える">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M7.2 7.1A7 7 0 0 1 18 9h-2.5l3.7 3.7L23 9h-2.9A9 9 0 0 0 5.7 5.7L7.2 7.1ZM4.8 11.3 1 15h2.9a9 9 0 0 0 14.4 3.3l-1.5-1.4A7 7 0 0 1 6 15h2.5l-3.7-3.7Z" />
+              </svg>
+            </button>
           </div>
           <div class="camera-actions">
             <button id="cameraLibraryButton" class="camera-text-button" type="button">写真を選ぶ</button>

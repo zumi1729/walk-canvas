@@ -5,7 +5,10 @@ export type CameraModalAction = "capture" | "library" | null;
 export type CameraModalSession = {
   video: HTMLVideoElement;
   result: Promise<CameraModalAction>;
-  setCameraReady: () => void;
+  isOpen: () => boolean;
+  setSwitchHandler: (handler: () => void) => void;
+  setCameraLoading: (message: string) => void;
+  setCameraReady: (isFrontCamera: boolean) => void;
   setCameraError: (message: string) => void;
   close: () => void;
 };
@@ -15,12 +18,15 @@ export function showCameraModal(onOpenLibrary: () => void): CameraModalSession {
   const video = requireElement<HTMLVideoElement>(dialog, "#cameraPreview");
   const status = requireElement<HTMLElement>(dialog, "#cameraStatus");
   const captureButton = requireElement<HTMLButtonElement>(dialog, "#cameraCaptureButton");
+  const switchButton = requireElement<HTMLButtonElement>(dialog, "#cameraSwitchButton");
   const libraryButton = requireElement<HTMLButtonElement>(dialog, "#cameraLibraryButton");
   const cancelButton = requireElement<HTMLButtonElement>(dialog, "#cameraCancelButton");
 
   status.textContent = "カメラを準備しています…";
   status.classList.remove("is-error");
   captureButton.disabled = true;
+  switchButton.disabled = true;
+  video.classList.remove("is-mirrored");
 
   let settle: (action: CameraModalAction) => void = () => undefined;
   let settled = false;
@@ -37,6 +43,7 @@ export function showCameraModal(onOpenLibrary: () => void): CameraModalSession {
     dialog.close("capture");
     finish("capture");
   };
+  switchButton.onclick = () => undefined;
   libraryButton.onclick = () => {
     onOpenLibrary();
     dialog.close("library");
@@ -57,15 +64,28 @@ export function showCameraModal(onOpenLibrary: () => void): CameraModalSession {
   return {
     video,
     result,
-    setCameraReady: () => {
+    isOpen: () => dialog.open,
+    setSwitchHandler: (handler) => {
+      switchButton.onclick = handler;
+    },
+    setCameraLoading: (message) => {
+      status.textContent = message;
+      status.classList.remove("is-error");
+      captureButton.disabled = true;
+      switchButton.disabled = true;
+    },
+    setCameraReady: (isFrontCamera) => {
       status.textContent = "";
       status.classList.remove("is-error");
       captureButton.disabled = false;
+      switchButton.disabled = false;
+      video.classList.toggle("is-mirrored", isFrontCamera);
     },
     setCameraError: (message) => {
       status.textContent = message;
       status.classList.add("is-error");
       captureButton.disabled = true;
+      switchButton.disabled = false;
     },
     close: () => {
       if (dialog.open) dialog.close("cancel");

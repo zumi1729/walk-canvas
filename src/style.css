@@ -357,6 +357,39 @@ h2 {
   background: #050607;
 }
 
+.camera-viewport video.is-mirrored {
+  transform: scaleX(-1);
+}
+
+.camera-switch-button {
+  position: absolute;
+  z-index: 2;
+  top: 14px;
+  right: 14px;
+  display: grid;
+  width: 46px;
+  height: 46px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.38);
+  border-radius: 50%;
+  color: #fff;
+  background: rgba(8, 11, 12, 0.5);
+  backdrop-filter: blur(8px);
+  cursor: pointer;
+}
+
+.camera-switch-button svg {
+  width: 25px;
+  height: 25px;
+  fill: currentColor;
+}
+
+.camera-switch-button:disabled {
+  cursor: wait;
+  opacity: 0.4;
+}
+
 .camera-status {
   position: absolute;
   inset: 0;
