@@ -9,6 +9,7 @@ export type VisitedCell = {
 
 export type PhotoNote = {
   id: string;
+  sessionId?: string;
   lat: number;
   lng: number;
   cellId: string;

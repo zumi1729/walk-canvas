@@ -12,8 +12,10 @@ import {
 } from "./db/db";
 import type { AppState, PhotoNote, VisitedCell, WalkPoint, WalkSession } from "./db/types";
 import { getCurrentPosition, getLastPosition, startTracking, stopTracking } from "./gps/tracker";
+import { getPhotosForSession } from "./history/history";
 import { renderVisitedCells, updateVisitedCell } from "./map/cellLayer";
 import { latLngToCell } from "./map/grid";
+import { clearHistoryMap, renderHistoryMap } from "./map/historyMap";
 import { initMap, moveToPoint, updateCurrentPosition } from "./map/map";
 import { addPhotoMarker, removePhotoMarker, renderPhotoMarkers } from "./map/photoMarkers";
 import {
@@ -34,6 +36,7 @@ import {
   type Controls,
 } from "./ui/controls";
 import { showCameraModal, showPhotoCommentModal, showPhotoDetailModal } from "./ui/modal";
+import { showWalkHistoryModal } from "./ui/history";
 import { showToast } from "./ui/toast";
 
 const MAX_RECORDING_ACCURACY_METERS = 35;
@@ -42,6 +45,7 @@ const MAX_WALKING_SPEED_METERS_PER_SECOND = 5;
 const state: AppState = { isTracking: false };
 const visitedCells = new Map<string, VisitedCell>();
 const photoNotes = new Map<string, PhotoNote>();
+const walkSessions = new Map<string, WalkSession>();
 
 let map: L.Map;
 let controls: Controls;
@@ -64,12 +68,13 @@ export async function bootstrap(): Promise<void> {
       getAllWalkSessions(),
     ]);
 
+    const normalizedSessions = await closeInterruptedSessions(sessions);
     for (const cell of cells) visitedCells.set(cell.cellId, cell);
     for (const note of notes) photoNotes.set(note.id, note);
+    for (const session of normalizedSessions) walkSessions.set(session.id, session);
     renderVisitedCells(map, cells);
     renderPhotoMarkers(map, notes, openPhotoDetails);
     updateStats();
-    await closeInterruptedSessions(sessions);
   } catch (error) {
     console.error(error);
     showToast("保存領域を開けませんでした。ブラウザの設定と空き容量を確認してください。", 6000);
@@ -88,6 +93,7 @@ function bindControls(): void {
   });
   controls.cameraButton.addEventListener("click", () => void handleCameraButton());
   controls.locateButton.addEventListener("click", () => void locateUser(true));
+  controls.historyButton.addEventListener("click", openWalkHistory);
   controls.cameraInput.addEventListener("change", () => void handleSelectedPhoto());
 }
 
@@ -103,6 +109,7 @@ async function startWalk(): Promise<void> {
     };
 
     await addWalkSession(session);
+    walkSessions.set(session.id, session);
     state.isTracking = true;
     state.currentSession = session;
     state.lastPosition = initialPoint;
@@ -133,6 +140,7 @@ async function stopWalk(): Promise<void> {
   try {
     state.currentSession.endedAt = new Date().toISOString();
     await updateWalkSession(state.currentSession);
+    walkSessions.set(state.currentSession.id, state.currentSession);
     showToast("散歩を保存しました。");
   } catch (error) {
     console.error(error);
@@ -300,6 +308,7 @@ async function processPhoto(file: File): Promise<void> {
 
     const note: PhotoNote = {
       id: createId(),
+      sessionId: state.isTracking ? state.currentSession?.id : undefined,
       lat: position.lat,
       lng: position.lng,
       cellId: latLngToCell(position.lat, position.lng).cellId,
@@ -321,6 +330,16 @@ async function processPhoto(file: File): Promise<void> {
   }
 }
 
+function openWalkHistory(): void {
+  showWalkHistoryModal({
+    sessions: [...walkSessions.values()],
+    getPhotos: (session) => getPhotosForSession(session, [...photoNotes.values()]),
+    onRenderRoute: (session, notes) => renderHistoryMap("historyMap", session, notes),
+    onClearRoute: clearHistoryMap,
+    onOpenPhoto: openPhotoDetails,
+  });
+}
+
 function openPhotoDetails(note: PhotoNote): void {
   showPhotoDetailModal(note, async () => {
     try {
@@ -337,10 +356,16 @@ function openPhotoDetails(note: PhotoNote): void {
   });
 }
 
-async function closeInterruptedSessions(sessions: WalkSession[]): Promise<void> {
-  const interrupted = sessions.filter((session) => !session.endedAt);
-  const endedAt = new Date().toISOString();
-  await Promise.all(interrupted.map((session) => updateWalkSession({ ...session, endedAt })));
+async function closeInterruptedSessions(sessions: WalkSession[]): Promise<WalkSession[]> {
+  return Promise.all(
+    sessions.map(async (session) => {
+      if (session.endedAt) return session;
+      const endedAt = session.recordedPoints.at(-1)?.timestamp ?? session.startedAt;
+      const closedSession = { ...session, endedAt };
+      await updateWalkSession(closedSession);
+      return closedSession;
+    }),
+  );
 }
 
 function updateStats(): void {
@@ -405,7 +430,13 @@ function renderAppShell(): void {
             <p class="eyebrow">YOUR WALKING MAP</p>
             <h1>Walk Canvas</h1>
           </div>
-          <span id="trackingStatus" class="status-pill">停止中</span>
+          <div class="header-actions">
+            <span id="trackingStatus" class="status-pill">停止中</span>
+            <button id="historyButton" class="history-button" type="button" aria-label="散歩履歴を開く">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 8.5 6H18a6.7 6.7 0 1 1-1.5-2.5L14 9h7V2l-2.8 2.8A8.9 8.9 0 0 0 12 3Zm-1 4v6l4.6 2.7 1-1.7-3.6-2.1V7h-2Z"/></svg>
+              <span>履歴</span>
+            </button>
+          </div>
         </div>
         <div class="today-stats" aria-label="今日の記録">
           <div><strong id="todayCells">0</strong><span>新しいマス</span></div>
@@ -451,6 +482,46 @@ function renderAppShell(): void {
             <button id="commentCancelButton" class="secondary-button" type="button">キャンセル</button>
             <button id="commentSaveButton" class="save-button" type="button">地図に残す</button>
           </div>
+        </div>
+      </dialog>
+
+      <dialog id="historyDialog" class="modal history-modal">
+        <div class="history-shell">
+          <section id="historyListView" class="history-view">
+            <header class="history-header">
+              <div><p class="eyebrow">WALK ARCHIVE</p><h2>散歩の記録</h2></div>
+              <button id="historyCloseButton" class="icon-close-button" type="button" aria-label="閉じる">×</button>
+            </header>
+            <div id="historyList" class="history-list"></div>
+          </section>
+
+          <section id="historyDetailView" class="history-view" hidden>
+            <header class="history-header">
+              <button id="historyBackButton" class="history-back-button" type="button">
+                <span aria-hidden="true">‹</span> 一覧
+              </button>
+              <div class="history-detail-heading">
+                <p id="historyDetailDate"></p>
+                <span id="historyDetailTime"></span>
+              </div>
+            </header>
+
+            <div class="history-metrics">
+              <div><strong id="historyDetailDuration">0分</strong><span>時間</span></div>
+              <div><strong id="historyDetailDistance">0m</strong><span>距離</span></div>
+              <div><strong id="historyDetailCells">0マス</strong><span>歩いたマス</span></div>
+            </div>
+
+            <div class="history-map-wrap">
+              <div id="historyMap" aria-label="この散歩のルート"></div>
+              <p id="historyEmptyRoute" class="history-empty-route" hidden>表示できるGPSルートがありません</p>
+            </div>
+
+            <section id="historyPhotoSection" class="history-photo-section" hidden>
+              <h3>この散歩の写真</h3>
+              <div id="historyPhotoGrid" class="history-photo-grid"></div>
+            </section>
+          </section>
         </div>
       </dialog>
 

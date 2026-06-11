@@ -2,6 +2,7 @@ export type Controls = {
   trackingButton: HTMLButtonElement;
   cameraButton: HTMLButtonElement;
   locateButton: HTMLButtonElement;
+  historyButton: HTMLButtonElement;
   cameraInput: HTMLInputElement;
   status: HTMLElement;
   todayCells: HTMLElement;
@@ -13,6 +14,7 @@ export function getControls(): Controls {
     trackingButton: requireElement("#trackingButton"),
     cameraButton: requireElement("#cameraButton"),
     locateButton: requireElement("#locateButton"),
+    historyButton: requireElement("#historyButton"),
     cameraInput: requireElement("#cameraInput"),
     status: requireElement("#trackingStatus"),
     todayCells: requireElement("#todayCells"),
@@ -34,6 +36,7 @@ export function setControlsBusy(controls: Controls, busy: boolean): void {
   controls.trackingButton.disabled = busy;
   controls.cameraButton.disabled = busy;
   controls.locateButton.disabled = busy;
+  controls.historyButton.disabled = busy;
 }
 
 export function updateTodayStats(controls: Controls, cells: number, photos: number): void {
