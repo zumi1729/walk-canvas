@@ -1,5 +1,79 @@
 import type { PhotoNote } from "../db/types";
 
+export type CameraModalAction = "capture" | "library" | null;
+
+export type CameraModalSession = {
+  video: HTMLVideoElement;
+  result: Promise<CameraModalAction>;
+  setCameraReady: () => void;
+  setCameraError: (message: string) => void;
+  close: () => void;
+};
+
+export function showCameraModal(onOpenLibrary: () => void): CameraModalSession {
+  const dialog = requireDialog("#cameraDialog");
+  const video = requireElement<HTMLVideoElement>(dialog, "#cameraPreview");
+  const status = requireElement<HTMLElement>(dialog, "#cameraStatus");
+  const captureButton = requireElement<HTMLButtonElement>(dialog, "#cameraCaptureButton");
+  const libraryButton = requireElement<HTMLButtonElement>(dialog, "#cameraLibraryButton");
+  const cancelButton = requireElement<HTMLButtonElement>(dialog, "#cameraCancelButton");
+
+  status.textContent = "カメラを準備しています…";
+  status.classList.remove("is-error");
+  captureButton.disabled = true;
+
+  let settle: (action: CameraModalAction) => void = () => undefined;
+  let settled = false;
+  const result = new Promise<CameraModalAction>((resolve) => {
+    settle = resolve;
+  });
+  const finish = (action: CameraModalAction) => {
+    if (settled) return;
+    settled = true;
+    settle(action);
+  };
+
+  captureButton.onclick = () => {
+    dialog.close("capture");
+    finish("capture");
+  };
+  libraryButton.onclick = () => {
+    onOpenLibrary();
+    dialog.close("library");
+    finish("library");
+  };
+  cancelButton.onclick = () => {
+    dialog.close("cancel");
+    finish(null);
+  };
+  dialog.oncancel = (event) => {
+    event.preventDefault();
+    dialog.close("cancel");
+    finish(null);
+  };
+  dialog.onclose = () => finish(dialog.returnValue === "capture" ? "capture" : null);
+  dialog.showModal();
+
+  return {
+    video,
+    result,
+    setCameraReady: () => {
+      status.textContent = "";
+      status.classList.remove("is-error");
+      captureButton.disabled = false;
+    },
+    setCameraError: (message) => {
+      status.textContent = message;
+      status.classList.add("is-error");
+      captureButton.disabled = true;
+    },
+    close: () => {
+      if (dialog.open) dialog.close("cancel");
+      finish(null);
+    },
+  };
+}
+
 export function showPhotoCommentModal(previewUrl: string): Promise<string | null> {
   const dialog = requireDialog("#photoCommentDialog");
   const preview = requireElement<HTMLImageElement>(dialog, "#photoPreview");

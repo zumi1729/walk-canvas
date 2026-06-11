@@ -16,7 +16,14 @@ import { renderVisitedCells, updateVisitedCell } from "./map/cellLayer";
 import { latLngToCell } from "./map/grid";
 import { initMap, moveToPoint, updateCurrentPosition } from "./map/map";
 import { addPhotoMarker, removePhotoMarker, renderPhotoMarkers } from "./map/photoMarkers";
-import { getSelectedPhoto, openCamera } from "./photos/camera";
+import {
+  captureCameraPhoto,
+  getCameraErrorMessage,
+  getSelectedPhoto,
+  openPhotoLibrary,
+  startCamera,
+  stopCamera,
+} from "./photos/camera";
 import { createThumbnail, resizeImage } from "./photos/imageResize";
 import {
   getControls,
@@ -25,7 +32,7 @@ import {
   updateTodayStats,
   type Controls,
 } from "./ui/controls";
-import { showPhotoCommentModal, showPhotoDetailModal } from "./ui/modal";
+import { showCameraModal, showPhotoCommentModal, showPhotoDetailModal } from "./ui/modal";
 import { showToast } from "./ui/toast";
 
 const MAX_RECORDING_ACCURACY_METERS = 35;
@@ -68,14 +75,17 @@ export async function bootstrap(): Promise<void> {
   }
 
   void locateUser(false);
-  window.addEventListener("pagehide", stopTracking);
+  window.addEventListener("pagehide", () => {
+    stopTracking();
+    stopCamera();
+  });
 }
 
 function bindControls(): void {
   controls.trackingButton.addEventListener("click", () => {
     void (state.isTracking ? stopWalk() : startWalk());
   });
-  controls.cameraButton.addEventListener("click", () => openCamera(controls.cameraInput));
+  controls.cameraButton.addEventListener("click", () => void handleCameraButton());
   controls.locateButton.addEventListener("click", () => void locateUser(true));
   controls.cameraInput.addEventListener("change", () => void handleSelectedPhoto());
 }
@@ -210,6 +220,42 @@ async function handleSelectedPhoto(): Promise<void> {
   const file = getSelectedPhoto(controls.cameraInput);
   if (!file) return;
 
+  await processPhoto(file);
+  controls.cameraInput.value = "";
+}
+
+async function handleCameraButton(): Promise<void> {
+  setControlsBusy(controls, true);
+  const modal = showCameraModal(() => openPhotoLibrary(controls.cameraInput));
+  let cameraStarted = false;
+
+  try {
+    await startCamera(modal.video);
+    cameraStarted = true;
+    modal.setCameraReady();
+  } catch (error) {
+    console.error(error);
+    stopCamera(modal.video);
+    modal.setCameraError(getCameraErrorMessage(error));
+  }
+
+  const action = await modal.result;
+  try {
+    if (action === "capture" && cameraStarted) {
+      const file = await captureCameraPhoto(modal.video);
+      await processPhoto(file);
+    }
+  } catch (error) {
+    console.error(error);
+    showToast(getErrorMessage(error, "写真を撮影できませんでした。"), 6000);
+  } finally {
+    stopCamera(modal.video);
+    setControlsBusy(controls, false);
+  }
+}
+
+async function processPhoto(file: File): Promise<void> {
+
   setControlsBusy(controls, true);
   try {
     const locationPromise = state.isTracking && getLastPosition()
@@ -250,7 +296,6 @@ async function handleSelectedPhoto(): Promise<void> {
     showToast(getErrorMessage(error, "保存に失敗しました。端末の空き容量を確認してください。"), 6000);
   } finally {
     setControlsBusy(controls, false);
-    controls.cameraInput.value = "";
   }
 }
 
@@ -369,7 +414,7 @@ function renderAppShell(): void {
         </button>
       </nav>
 
-      <input id="cameraInput" type="file" accept="image/*" capture="environment" hidden />
+      <input id="cameraInput" type="file" accept="image/*" hidden />
       <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
       <dialog id="photoCommentDialog" class="modal">
@@ -383,6 +428,22 @@ function renderAppShell(): void {
           <div class="modal-actions">
             <button id="commentCancelButton" class="secondary-button" type="button">キャンセル</button>
             <button id="commentSaveButton" class="save-button" type="button">地図に残す</button>
+          </div>
+        </div>
+      </dialog>
+
+      <dialog id="cameraDialog" class="modal camera-modal">
+        <div class="camera-card">
+          <div class="camera-viewport">
+            <video id="cameraPreview" autoplay muted playsinline></video>
+            <p id="cameraStatus" class="camera-status">カメラを準備しています…</p>
+          </div>
+          <div class="camera-actions">
+            <button id="cameraLibraryButton" class="camera-text-button" type="button">写真を選ぶ</button>
+            <button id="cameraCaptureButton" class="shutter-button" type="button" aria-label="撮影">
+              <span></span>
+            </button>
+            <button id="cameraCancelButton" class="camera-text-button" type="button">閉じる</button>
           </div>
         </div>
       </dialog>

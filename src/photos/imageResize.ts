@@ -1,4 +1,9 @@
-type DrawableImage = CanvasImageSource & { width: number; height: number };
+type LoadedImage = {
+  source: CanvasImageSource;
+  width: number;
+  height: number;
+  dispose: () => void;
+};
 
 export async function resizeImage(
   file: File,
@@ -13,10 +18,10 @@ export async function resizeImage(
     const height = Math.max(1, Math.round(image.height * scale));
     const canvas = createCanvas(width, height);
     const context = getCanvasContext(canvas);
-    context.drawImage(image, 0, 0, width, height);
+    context.drawImage(image.source, 0, 0, width, height);
     return canvasToJpeg(canvas, quality);
   } finally {
-    closeImage(image);
+    image.dispose();
   }
 }
 
@@ -28,32 +33,63 @@ export async function createThumbnail(file: File, size = 128): Promise<Blob> {
     const sourceY = (image.height - sourceSize) / 2;
     const canvas = createCanvas(size, size);
     const context = getCanvasContext(canvas);
-    context.drawImage(image, sourceX, sourceY, sourceSize, sourceSize, 0, 0, size, size);
+    context.drawImage(image.source, sourceX, sourceY, sourceSize, sourceSize, 0, 0, size, size);
     return canvasToJpeg(canvas, 0.75);
   } finally {
-    closeImage(image);
+    image.dispose();
   }
 }
 
-async function loadImage(file: File): Promise<DrawableImage> {
-  if ("createImageBitmap" in window) {
-    return createImageBitmap(file, { imageOrientation: "from-image" });
-  }
-
-  const url = URL.createObjectURL(file);
+async function loadImage(file: File): Promise<LoadedImage> {
   try {
-    const image = new Image();
-    image.decoding = "async";
-    image.src = url;
-    await image.decode();
-    return image;
-  } finally {
-    URL.revokeObjectURL(url);
+    return await loadHtmlImage(file);
+  } catch (htmlImageError) {
+    if (!("createImageBitmap" in window)) throw htmlImageError;
+
+    const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+    if (bitmap.width === 0 || bitmap.height === 0) {
+      bitmap.close();
+      throw new Error("画像を読み込めませんでした。");
+    }
+    return {
+      source: bitmap,
+      width: bitmap.width,
+      height: bitmap.height,
+      dispose: () => bitmap.close(),
+    };
   }
 }
 
-function closeImage(image: DrawableImage): void {
-  if ("close" in image && typeof image.close === "function") image.close();
+async function loadHtmlImage(file: File): Promise<LoadedImage> {
+  const url = URL.createObjectURL(file);
+  const image = new Image();
+  image.decoding = "async";
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve();
+      image.onerror = () => reject(new Error("画像を読み込めませんでした。"));
+      image.src = url;
+    });
+
+    if (image.naturalWidth === 0 || image.naturalHeight === 0) {
+      throw new Error("画像を読み込めませんでした。");
+    }
+
+    return {
+      source: image,
+      width: image.naturalWidth,
+      height: image.naturalHeight,
+      dispose: () => {
+        image.removeAttribute("src");
+        URL.revokeObjectURL(url);
+      },
+    };
+  } catch (error) {
+    image.removeAttribute("src");
+    URL.revokeObjectURL(url);
+    throw error;
+  }
 }
 
 function createCanvas(width: number, height: number): HTMLCanvasElement {

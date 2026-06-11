@@ -326,6 +326,111 @@ h2 {
   backdrop-filter: blur(3px);
 }
 
+.camera-modal {
+  width: min(520px, 100%);
+  max-height: 100dvh;
+  border-radius: 24px;
+  background: #0a0d0e;
+}
+
+.camera-card {
+  display: flex;
+  min-height: min(720px, 88dvh);
+  flex-direction: column;
+  background: #0a0d0e;
+}
+
+.camera-viewport {
+  position: relative;
+  flex: 1;
+  min-height: 56dvh;
+  overflow: hidden;
+  background: #050607;
+}
+
+.camera-viewport video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  min-height: 56dvh;
+  object-fit: cover;
+  background: #050607;
+}
+
+.camera-status {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 30px;
+  color: rgba(255, 255, 255, 0.82);
+  background: rgba(5, 6, 7, 0.46);
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.65;
+  text-align: center;
+  pointer-events: none;
+}
+
+.camera-status:empty {
+  display: none;
+}
+
+.camera-status.is-error {
+  color: #fff;
+  background: rgba(5, 6, 7, 0.72);
+}
+
+.camera-actions {
+  display: grid;
+  grid-template-columns: 1fr 84px 1fr;
+  align-items: center;
+  gap: 8px;
+  padding: 20px 14px calc(20px + env(safe-area-inset-bottom));
+}
+
+.camera-text-button {
+  min-height: 48px;
+  border: 0;
+  color: #fff;
+  background: transparent;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.shutter-button {
+  display: grid;
+  width: 72px;
+  height: 72px;
+  place-items: center;
+  justify-self: center;
+  padding: 0;
+  border: 4px solid #fff;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+}
+
+.shutter-button span {
+  display: block;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  background: #fff;
+}
+
+.shutter-button:active:not(:disabled) span {
+  transform: scale(0.92);
+}
+
+.shutter-button:disabled {
+  cursor: wait;
+  opacity: 0.35;
+}
+
 .modal-card {
   padding: 18px;
 }
@@ -460,5 +565,9 @@ h2 {
 
   .leaflet-top.leaflet-right {
     top: 154px;
+  }
+
+  .camera-card {
+    min-height: 100dvh;
   }
 }
