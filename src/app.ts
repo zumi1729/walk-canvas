@@ -425,23 +425,17 @@ function renderAppShell(): void {
   root.innerHTML = `
     <main class="app-shell">
       <header class="app-header">
-        <div class="brand-row">
-          <div>
-            <p class="eyebrow">YOUR WALKING MAP</p>
-            <h1>Walk Canvas</h1>
-          </div>
-          <div class="header-actions">
-            <span id="trackingStatus" class="status-pill">停止中</span>
-            <button id="historyButton" class="history-button" type="button" aria-label="散歩履歴を開く">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 8.5 6H18a6.7 6.7 0 1 1-1.5-2.5L14 9h7V2l-2.8 2.8A8.9 8.9 0 0 0 12 3Zm-1 4v6l4.6 2.7 1-1.7-3.6-2.1V7h-2Z"/></svg>
-              <span>履歴</span>
-            </button>
-          </div>
-        </div>
         <div class="today-stats" aria-label="今日の記録">
           <div><strong id="todayCells">0</strong><span>新しいマス</span></div>
           <div class="stat-divider" aria-hidden="true"></div>
           <div><strong id="todayPhotos">0</strong><span>写真</span></div>
+        </div>
+        <div class="header-actions">
+          <span id="trackingStatus" class="status-pill">停止中</span>
+          <button id="historyButton" class="history-button" type="button" aria-label="散歩履歴を開く">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 8.5 6H18a6.7 6.7 0 1 1-1.5-2.5L14 9h7V2l-2.8 2.8A8.9 8.9 0 0 0 12 3Zm-1 4v6l4.6 2.7 1-1.7-3.6-2.1V7h-2Z"/></svg>
+            <span>履歴</span>
+          </button>
         </div>
       </header>
 
