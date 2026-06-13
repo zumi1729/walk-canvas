@@ -1,5 +1,8 @@
+export type TravelMode = "walk" | "bicycle" | "car";
+
 export type VisitedCell = {
   cellId: string;
+  mode?: TravelMode;
   x: number;
   y: number;
   visitCount: number;
@@ -30,6 +33,7 @@ export type WalkPoint = {
 
 export type WalkSession = {
   id: string;
+  mode?: TravelMode;
   isFavorite?: boolean;
   tags?: string[];
   startedAt: string;

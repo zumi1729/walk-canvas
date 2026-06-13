@@ -1,6 +1,7 @@
 import L from "leaflet";
 import type { PhotoNote, WalkSession } from "../db/types";
 import { getRoutePoints } from "../history/history";
+import { getSessionMode, getTravelModeConfig } from "../travelMode";
 
 const DEFAULT_CENTER: L.LatLngExpression = [34.1785, 131.4737];
 
@@ -30,8 +31,9 @@ export function renderHistoryMap(elementId: string, session: WalkSession, notes:
   const boundsPoints: L.LatLng[] = [...routeLatLngs];
 
   if (routeLatLngs.length > 1) {
+    const modeColor = getTravelModeConfig(getSessionMode(session.mode)).color;
     L.polyline(routeLatLngs, {
-      color: "#14708b",
+      color: modeColor,
       weight: 6,
       opacity: 0.9,
       lineCap: "round",

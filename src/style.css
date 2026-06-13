@@ -130,7 +130,7 @@ button {
   z-index: 9;
   top: 78px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1fr) auto;
   gap: 8px;
   padding: 10px 14px;
   border-bottom: 1px solid #dce4e6;
@@ -289,8 +289,45 @@ h2 {
   width: 9px;
   height: 9px;
   border-radius: 3px;
-  background: var(--level-color);
+  background: var(--mode-color, #2563eb);
   content: "";
+  opacity: var(--level-opacity);
+}
+
+.map-mode-switch {
+  position: absolute;
+  z-index: 450;
+  top: calc(86px + env(safe-area-inset-top));
+  left: 12px;
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.75);
+  border-radius: 15px;
+  background: rgba(249, 251, 251, 0.9);
+  box-shadow: 0 6px 20px rgba(31, 43, 48, 0.14);
+  backdrop-filter: blur(10px);
+}
+
+.map-mode-switch button {
+  min-height: 34px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 11px;
+  color: #66757b;
+  background: transparent;
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.map-mode-switch button span {
+  margin-right: 3px;
+}
+
+.map-mode-switch button.is-selected {
+  color: #fff;
+  background: #344b55;
 }
 
 .bottom-controls {
@@ -1055,6 +1092,46 @@ h2 {
   margin-bottom: 14px;
 }
 
+.travel-mode-options {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.travel-mode-option {
+  display: grid;
+  min-width: 0;
+  min-height: 112px;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  padding: 12px 5px;
+  border: 2px solid transparent;
+  border-radius: 16px;
+  color: #526168;
+  background: #edf1f2;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.travel-mode-option.is-selected {
+  border-color: #247089;
+  color: #164f62;
+  background: #e4f4f8;
+}
+
+.travel-mode-icon {
+  font-size: 30px;
+  line-height: 1;
+}
+
+.travel-mode-note {
+  margin: 13px 2px 0;
+  color: #718086;
+  font-size: 11px;
+  font-weight: 700;
+}
+
 .photo-preview,
 .detail-photo {
   display: block;
@@ -1172,6 +1249,11 @@ h2 {
   .map-legend {
     right: 20px;
     bottom: 112px;
+  }
+
+  .map-mode-switch {
+    top: 94px;
+    left: 20px;
   }
 }
 
