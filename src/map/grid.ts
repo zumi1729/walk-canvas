@@ -60,21 +60,17 @@ export function getWalkLevel(visitCount: number): 0 | 1 | 2 | 3 | 4 | 5 {
   return 0;
 }
 
-export function getCellStyle(visitCount: number) {
+export function getCellStyle(visitCount: number, mode: TravelMode = "walk") {
   const level = getWalkLevel(visitCount);
-  const styles = {
-    0: { fillColor: "#000000", fillOpacity: 0 },
-    1: { fillColor: "#7dd3fc", fillOpacity: 0.45 },
-    2: { fillColor: "#2563eb", fillOpacity: 0.5 },
-    3: { fillColor: "#22c55e", fillOpacity: 0.52 },
-    4: { fillColor: "#facc15", fillOpacity: 0.55 },
-    5: { fillColor: "#f97316", fillOpacity: 0.6 },
-  } as const;
+  const fillColor = getTravelModeConfig(mode).color;
+  const fillOpacity = [0, 0.28, 0.38, 0.48, 0.58, 0.7][level];
 
   return {
-    color: styles[level].fillColor,
-    fillColor: styles[level].fillColor,
-    fillOpacity: styles[level].fillOpacity,
+    color: fillColor,
+    fillColor,
+    fillOpacity,
     weight: 0,
   };
 }
+import type { TravelMode } from "../db/types";
+import { getTravelModeConfig } from "../travelMode";

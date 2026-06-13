@@ -1,3 +1,6 @@
+import type { TravelMode } from "../db/types";
+import { getTravelModeConfig } from "../travelMode";
+
 export type Controls = {
   trackingButton: HTMLButtonElement;
   cameraButton: HTMLButtonElement;
@@ -24,14 +27,15 @@ export function getControls(): Controls {
   };
 }
 
-export function setTrackingUi(controls: Controls, isTracking: boolean): void {
-  controls.status.textContent = isTracking ? "散歩中" : "停止中";
+export function setTrackingUi(controls: Controls, isTracking: boolean, mode: TravelMode = "walk"): void {
+  const config = getTravelModeConfig(mode);
+  controls.status.textContent = isTracking ? `${config.icon} ${config.shortLabel}中` : "停止中";
   controls.status.classList.toggle("is-active", isTracking);
   controls.trackingButton.classList.toggle("is-stop", isTracking);
   controls.trackingButton.setAttribute("aria-pressed", String(isTracking));
   controls.trackingButton.innerHTML = isTracking
-    ? `${stopIcon()}<span>散歩停止</span>`
-    : `${walkIcon()}<span>散歩開始</span>`;
+    ? `${stopIcon()}<span>記録停止</span>`
+    : `${walkIcon()}<span>記録開始</span>`;
 }
 
 export function setControlsBusy(controls: Controls, busy: boolean): void {

@@ -1,4 +1,4 @@
-import type { PhotoNote, WalkSession } from "../db/types";
+import type { PhotoNote, TravelMode, WalkSession } from "../db/types";
 import {
   formatDistance,
   formatDuration,
@@ -15,6 +15,7 @@ import {
   matchesMetadataFilter,
   normalizeTags,
 } from "../library/metadata";
+import { getSessionMode, getTravelModeConfig, TRAVEL_MODES } from "../travelMode";
 
 type HistoryModalOptions = {
   getSessions: () => WalkSession[];
@@ -31,10 +32,12 @@ export function showWalkHistoryModal(options: HistoryModalOptions): void {
   const detailView = requireElement<HTMLElement>(dialog, "#historyDetailView");
   const list = requireElement<HTMLElement>(dialog, "#historyList");
   const tagFilter = requireElement<HTMLSelectElement>(dialog, "#historyTagFilter");
+  const modeFilter = requireElement<HTMLSelectElement>(dialog, "#historyModeFilter");
   const favoriteFilter = requireElement<HTMLButtonElement>(dialog, "#historyFavoriteFilter");
   const closeButton = requireElement<HTMLButtonElement>(dialog, "#historyCloseButton");
   const backButton = requireElement<HTMLButtonElement>(dialog, "#historyBackButton");
   const detailDate = requireElement<HTMLElement>(dialog, "#historyDetailDate");
+  const detailMode = requireElement<HTMLElement>(dialog, "#historyDetailMode");
   const detailTime = requireElement<HTMLElement>(dialog, "#historyDetailTime");
   const detailDuration = requireElement<HTMLElement>(dialog, "#historyDetailDuration");
   const detailDistance = requireElement<HTMLElement>(dialog, "#historyDetailDistance");
@@ -48,6 +51,7 @@ export function showWalkHistoryModal(options: HistoryModalOptions): void {
   const emptyRoute = requireElement<HTMLElement>(dialog, "#historyEmptyRoute");
   const objectUrls: string[] = [];
   let selectedTag = "";
+  let selectedMode: TravelMode | "" = "";
   let favoritesOnly = false;
   let currentSessionId: string | undefined;
 
@@ -71,6 +75,7 @@ export function showWalkHistoryModal(options: HistoryModalOptions): void {
     favoriteFilter.classList.toggle("is-active", favoritesOnly);
     favoriteFilter.setAttribute("aria-pressed", String(favoritesOnly));
     const sessions = allSessions
+      .filter((session) => !selectedMode || getSessionMode(session.mode) === selectedMode)
       .filter((session) => matchesMetadataFilter(session, selectedTag, favoritesOnly))
       .sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt));
 
@@ -78,8 +83,8 @@ export function showWalkHistoryModal(options: HistoryModalOptions): void {
       const empty = document.createElement("div");
       empty.className = "history-empty";
       empty.innerHTML = allSessions.length === 0
-        ? "<strong>まだ散歩の記録がありません</strong><span>散歩を開始すると、ここにルートが残ります。</span>"
-        : "<strong>条件に合う散歩がありません</strong><span>タグかお気に入りの絞り込みを変更してください。</span>";
+        ? "<strong>まだ移動記録がありません</strong><span>記録を開始すると、ここにルートが残ります。</span>"
+        : "<strong>条件に合う記録がありません</strong><span>モード、タグ、お気に入りの絞り込みを変更してください。</span>";
       list.append(empty);
       return;
     }
@@ -118,6 +123,8 @@ export function showWalkHistoryModal(options: HistoryModalOptions): void {
     listView.hidden = true;
     detailView.hidden = false;
     detailDate.textContent = formatSessionDate(session);
+    const modeConfig = getTravelModeConfig(getSessionMode(session.mode));
+    detailMode.textContent = `${modeConfig.icon} ${modeConfig.label}`;
     detailTime.textContent = formatSessionTimeRange(session);
     detailDuration.textContent = formatDuration(getSessionDurationMilliseconds(session));
     detailDistance.textContent = formatDistance(getRouteDistanceMeters(session));
@@ -136,6 +143,10 @@ export function showWalkHistoryModal(options: HistoryModalOptions): void {
 
   tagFilter.onchange = () => {
     selectedTag = tagFilter.value;
+    showList();
+  };
+  modeFilter.onchange = () => {
+    selectedMode = modeFilter.value as TravelMode | "";
     showList();
   };
   favoriteFilter.onclick = () => {
@@ -216,7 +227,8 @@ function createHistoryItem(
   const copy = document.createElement("span");
   copy.className = "history-item-copy";
   const title = document.createElement("strong");
-  title.textContent = formatSessionDate(session);
+  const modeConfig = getTravelModeConfig(getSessionMode(session.mode));
+  title.textContent = `${modeConfig.icon} ${formatSessionDate(session)}`;
   const meta = document.createElement("span");
   meta.textContent = `${formatDuration(getSessionDurationMilliseconds(session))} ・ ${formatDistance(getRouteDistanceMeters(session))}`;
   const submeta = document.createElement("span");
@@ -241,7 +253,7 @@ function createPhotoButton(note: PhotoNote, objectUrls: string[], onClick: () =>
   objectUrls.push(url);
   const image = document.createElement("img");
   image.src = url;
-  image.alt = note.comment || "散歩中の写真";
+  image.alt = note.comment || "移動中の写真";
   const comment = document.createElement("span");
   comment.textContent = `${note.isFavorite ? "★ " : ""}${note.comment || "コメントなし"}`;
   button.append(image, comment);
@@ -272,6 +284,16 @@ function populateTagFilter(select: HTMLSelectElement, tags: string[], selectedTa
   select.replaceChildren(new Option("すべてのタグ", ""));
   for (const tag of tags) select.add(new Option(`#${tag}`, tag));
   select.value = tags.includes(selectedTag) ? selectedTag : "";
+}
+
+export function renderTravelModeFilterOptions(): string {
+  return [
+    '<option value="">すべてのモード</option>',
+    ...TRAVEL_MODES.map((mode) => {
+      const config = getTravelModeConfig(mode);
+      return `<option value="${mode}">${config.icon} ${config.label}</option>`;
+    }),
+  ].join("");
 }
 
 function routeIcon(): string {

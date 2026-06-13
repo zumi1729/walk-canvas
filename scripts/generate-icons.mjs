@@ -7,7 +7,7 @@ const projectRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const outputDir = resolve(projectRoot, "public/icons");
 mkdirSync(outputDir, { recursive: true });
 
-for (const size of [192, 512]) {
+for (const size of [192, 512, 1024]) {
   const pixels = new Uint8Array(size * size * 4);
   const scale = size / 512;
 
@@ -32,7 +32,7 @@ for (const size of [192, 512]) {
   drawCircle(pixels, size, 375, 177, 54, [249, 115, 22, 255], scale);
   drawCircle(pixels, size, 375, 177, 20, [255, 255, 255, 255], scale);
 
-  writeFileSync(resolve(outputDir, `icon-${size}.png`), encodePng(size, size, pixels));
+  writeFileSync(resolve(outputDir, `icon-${size}.png`), encodePng(size, size, pixels, size === 1024));
 }
 
 function fill(pixels, size, color) {
@@ -113,17 +113,28 @@ function setPixel(pixels, size, x, y, color) {
   pixels.set(color, (y * size + x) * 4);
 }
 
-function encodePng(width, height, pixels) {
-  const stride = width * 4;
+function encodePng(width, height, pixels, stripAlpha = false) {
+  const channels = stripAlpha ? 3 : 4;
+  const stride = width * channels;
   const raw = Buffer.alloc((stride + 1) * height);
   for (let y = 0; y < height; y++) {
     raw[y * (stride + 1)] = 0;
-    Buffer.from(pixels.buffer, pixels.byteOffset + y * stride, stride).copy(raw, y * (stride + 1) + 1);
+    if (stripAlpha) {
+      for (let x = 0; x < width; x++) {
+        const sourceOffset = (y * width + x) * 4;
+        const targetOffset = y * (stride + 1) + 1 + x * 3;
+        raw[targetOffset] = pixels[sourceOffset];
+        raw[targetOffset + 1] = pixels[sourceOffset + 1];
+        raw[targetOffset + 2] = pixels[sourceOffset + 2];
+      }
+    } else {
+      Buffer.from(pixels.buffer, pixels.byteOffset + y * stride, stride).copy(raw, y * (stride + 1) + 1);
+    }
   }
 
   return Buffer.concat([
     Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
-    chunk("IHDR", Buffer.concat([uint32(width), uint32(height), Buffer.from([8, 6, 0, 0, 0])])),
+    chunk("IHDR", Buffer.concat([uint32(width), uint32(height), Buffer.from([8, stripAlpha ? 2 : 6, 0, 0, 0])])),
     chunk("IDAT", deflateSync(raw, { level: 9 })),
     chunk("IEND", Buffer.alloc(0)),
   ]);

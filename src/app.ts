@@ -11,11 +11,11 @@ import {
   updateWalkSession,
   upsertVisitedCell,
 } from "./db/db";
-import type { AppState, PhotoNote, VisitedCell, WalkPoint, WalkSession } from "./db/types";
+import type { AppState, PhotoNote, TravelMode, VisitedCell, WalkPoint, WalkSession } from "./db/types";
 import { getCurrentPosition, getLastPosition, startTracking, stopTracking } from "./gps/tracker";
 import { getPhotosForSession } from "./history/history";
 import { renderVisitedCells, updateVisitedCell } from "./map/cellLayer";
-import { latLngToCell } from "./map/grid";
+import { latLngToCell, type CellCoordinate } from "./map/grid";
 import { clearHistoryMap, renderHistoryMap } from "./map/historyMap";
 import { initMap, moveToPoint, updateCurrentPosition } from "./map/map";
 import { addPhotoMarker, removePhotoMarker, renderPhotoMarkers } from "./map/photoMarkers";
@@ -37,12 +37,19 @@ import {
   type Controls,
 } from "./ui/controls";
 import { showCameraModal, showPhotoCommentModal, showPhotoDetailModal } from "./ui/modal";
-import { showWalkHistoryModal } from "./ui/history";
+import { renderTravelModeFilterOptions, showWalkHistoryModal } from "./ui/history";
 import { showPhotoLibraryModal } from "./ui/photoLibrary";
 import { showToast } from "./ui/toast";
+import { renderTravelModeOptions, showTravelModeModal } from "./ui/travelMode";
+import {
+  getCellMode,
+  getModeCellId,
+  getSessionMode,
+  getTravelModeConfig,
+  TRAVEL_MODES,
+} from "./travelMode";
 
-const MAX_RECORDING_ACCURACY_METERS = 35;
-const MAX_WALKING_SPEED_METERS_PER_SECOND = 5;
+const LAST_MODE_STORAGE_KEY = "walk-canvas:last-travel-mode";
 
 const state: AppState = { isTracking: false };
 const visitedCells = new Map<string, VisitedCell>();
@@ -54,6 +61,8 @@ let controls: Controls;
 let activeCellIds = new Set<string>();
 let pointQueue: Promise<void> = Promise.resolve();
 let lastAccuracyWarningAt = 0;
+let lastAcceptedPoint: WalkPoint | undefined;
+let selectedMapMode: TravelMode = getStoredTravelMode();
 
 export async function bootstrap(): Promise<void> {
   renderAppShell();
@@ -71,10 +80,10 @@ export async function bootstrap(): Promise<void> {
     ]);
 
     const normalizedSessions = await closeInterruptedSessions(sessions);
-    for (const cell of cells) visitedCells.set(cell.cellId, cell);
+    for (const cell of cells) visitedCells.set(cell.cellId, { ...cell, mode: getCellMode(cell) });
     for (const note of notes) photoNotes.set(note.id, note);
     for (const session of normalizedSessions) walkSessions.set(session.id, session);
-    renderVisitedCells(map, cells);
+    renderSelectedModeCells();
     renderPhotoMarkers(map, notes, openPhotoDetails);
     updateStats();
   } catch (error) {
@@ -91,21 +100,39 @@ export async function bootstrap(): Promise<void> {
 
 function bindControls(): void {
   controls.trackingButton.addEventListener("click", () => {
-    void (state.isTracking ? stopWalk() : startWalk());
+    void (state.isTracking ? stopWalk() : chooseAndStartWalk());
   });
   controls.cameraButton.addEventListener("click", () => void handleCameraButton());
   controls.locateButton.addEventListener("click", () => void locateUser(true));
   controls.historyButton.addEventListener("click", openWalkHistory);
   controls.photoLibraryButton.addEventListener("click", openPhotoArchive);
   controls.cameraInput.addEventListener("change", () => void handleSelectedPhoto());
+  for (const button of document.querySelectorAll<HTMLButtonElement>("[data-map-mode]")) {
+    button.addEventListener("click", () => {
+      const mode = button.dataset.mapMode as TravelMode;
+      if (!TRAVEL_MODES.includes(mode)) return;
+      selectedMapMode = mode;
+      renderSelectedModeCells();
+    });
+  }
 }
 
-async function startWalk(): Promise<void> {
+async function chooseAndStartWalk(): Promise<void> {
+  const mode = await showTravelModeModal(getStoredTravelMode());
+  if (!mode) return;
+  localStorage.setItem(LAST_MODE_STORAGE_KEY, mode);
+  selectedMapMode = mode;
+  renderSelectedModeCells();
+  await startWalk(mode);
+}
+
+async function startWalk(mode: TravelMode): Promise<void> {
   setControlsBusy(controls, true);
   try {
     const initialPoint = await getCurrentPosition();
     const session: WalkSession = {
       id: createId(),
+      mode,
       startedAt: new Date().toISOString(),
       visitedCellIds: [],
       recordedPoints: [],
@@ -117,7 +144,8 @@ async function startWalk(): Promise<void> {
     state.currentSession = session;
     state.lastPosition = initialPoint;
     activeCellIds = new Set();
-    setTrackingUi(controls, true);
+    lastAcceptedPoint = undefined;
+    setTrackingUi(controls, true, mode);
     updateCurrentPosition(map, initialPoint);
     moveToPoint(map, initialPoint);
     enqueuePoint(initialPoint);
@@ -144,7 +172,7 @@ async function stopWalk(): Promise<void> {
     state.currentSession.endedAt = new Date().toISOString();
     await updateWalkSession(state.currentSession);
     walkSessions.set(state.currentSession.id, state.currentSession);
-    showToast("散歩を保存しました。");
+    showToast("移動記録を保存しました。");
   } catch (error) {
     console.error(error);
     showToast("保存に失敗しました。端末の空き容量を確認してください。", 5000);
@@ -152,6 +180,7 @@ async function stopWalk(): Promise<void> {
     state.isTracking = false;
     state.currentSession = undefined;
     activeCellIds.clear();
+    lastAcceptedPoint = undefined;
     setTrackingUi(controls, false);
     setControlsBusy(controls, false);
   }
@@ -173,23 +202,25 @@ async function processTrackingPoint(point: WalkPoint): Promise<void> {
   const session = state.currentSession;
   if (!state.isTracking || !session) return;
 
-  const previousPoint = session.recordedPoints.at(-1);
   session.recordedPoints.push(point);
+  const mode = getSessionMode(session.mode);
+  const config = getTravelModeConfig(mode);
 
-  if (point.accuracy > MAX_RECORDING_ACCURACY_METERS) {
+  if (point.accuracy > config.maxAccuracyMeters) {
     warnAboutAccuracy();
     await updateWalkSession(session);
     return;
   }
 
-  if (previousPoint && calculateSpeed(previousPoint, point) > MAX_WALKING_SPEED_METERS_PER_SECOND) {
+  if (lastAcceptedPoint && calculateSpeed(lastAcceptedPoint, point) > config.maxSpeedMetersPerSecond) {
     await updateWalkSession(session);
     return;
   }
 
-  const cellCoordinate = latLngToCell(point.lat, point.lng);
-  if (!activeCellIds.has(cellCoordinate.cellId)) {
-    const existing = visitedCells.get(cellCoordinate.cellId);
+  for (const cellCoordinate of getTraversedCells(lastAcceptedPoint, point)) {
+    const cellId = getModeCellId(mode, cellCoordinate.cellId);
+    if (activeCellIds.has(cellId)) continue;
+    const existing = visitedCells.get(cellId);
     const cell: VisitedCell = existing
       ? {
           ...existing,
@@ -198,19 +229,22 @@ async function processTrackingPoint(point: WalkPoint): Promise<void> {
         }
       : {
           ...cellCoordinate,
+          cellId,
+          mode,
           visitCount: 1,
           firstVisitedAt: point.timestamp,
           lastVisitedAt: point.timestamp,
         };
 
     await upsertVisitedCell(cell);
-    activeCellIds.add(cell.cellId);
+    activeCellIds.add(cellId);
     session.visitedCellIds.push(cell.cellId);
     visitedCells.set(cell.cellId, cell);
-    updateVisitedCell(map, cell);
-    updateStats();
+    if (mode === selectedMapMode) updateVisitedCell(map, cell);
   }
 
+  lastAcceptedPoint = point;
+  updateStats();
   await updateWalkSession(session);
 }
 
@@ -349,14 +383,14 @@ function openWalkHistory(): void {
         const sessionToSave = currentSession ? Object.assign(currentSession, session) : session;
         await updateWalkSession(sessionToSave);
         walkSessions.set(session.id, sessionToSave);
-        showToast("散歩の情報を保存しました。");
+        showToast("移動記録の情報を保存しました。");
       } catch (error) {
         if (currentSession && previousMetadata) {
           currentSession.isFavorite = previousMetadata.isFavorite;
           currentSession.tags = previousMetadata.tags;
         }
         console.error(error);
-        showToast("散歩の情報を保存できませんでした。", 5000);
+        showToast("移動記録の情報を保存できませんでした。", 5000);
         throw error;
       }
     },
@@ -449,6 +483,43 @@ function haversineDistance(from: WalkPoint, to: WalkPoint): number {
   return earthRadius * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+function getTraversedCells(from: WalkPoint | undefined, to: WalkPoint): CellCoordinate[] {
+  if (!from) return [latLngToCell(to.lat, to.lng)];
+
+  const distance = haversineDistance(from, to);
+  const steps = Math.min(500, Math.max(1, Math.ceil(distance / 12.5)));
+  const cells = new Map<string, CellCoordinate>();
+  for (let index = 0; index <= steps; index += 1) {
+    const progress = index / steps;
+    const cell = latLngToCell(
+      from.lat + (to.lat - from.lat) * progress,
+      from.lng + (to.lng - from.lng) * progress,
+    );
+    cells.set(cell.cellId, cell);
+  }
+  return [...cells.values()];
+}
+
+function renderSelectedModeCells(): void {
+  if (!map) return;
+  renderVisitedCells(
+    map,
+    [...visitedCells.values()].filter((cell) => getCellMode(cell) === selectedMapMode),
+  );
+  const config = getTravelModeConfig(selectedMapMode);
+  for (const button of document.querySelectorAll<HTMLButtonElement>("[data-map-mode]")) {
+    const isSelected = button.dataset.mapMode === selectedMapMode;
+    button.classList.toggle("is-selected", isSelected);
+    button.setAttribute("aria-pressed", String(isSelected));
+  }
+  document.querySelector<HTMLElement>(".map-legend")?.style.setProperty("--mode-color", config.color);
+}
+
+function getStoredTravelMode(): TravelMode {
+  const storedMode = localStorage.getItem(LAST_MODE_STORAGE_KEY) as TravelMode | null;
+  return storedMode && TRAVEL_MODES.includes(storedMode) ? storedMode : "walk";
+}
+
 function createId(): string {
   return crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
@@ -482,24 +553,31 @@ function renderAppShell(): void {
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm0 2v9.2l3.8-3.8 2.7 2.7 4.2-5.1 5.3 6.4V6H4Zm3 4a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"/></svg>
             <span>写真</span>
           </button>
-          <button id="historyButton" class="history-button" type="button" aria-label="散歩履歴を開く">
+          <button id="historyButton" class="history-button" type="button" aria-label="移動履歴を開く">
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 8.5 6H18a6.7 6.7 0 1 1-1.5-2.5L14 9h7V2l-2.8 2.8A8.9 8.9 0 0 0 12 3Zm-1 4v6l4.6 2.7 1-1.7-3.6-2.1V7h-2Z"/></svg>
             <span>履歴</span>
           </button>
         </div>
       </header>
 
-      <div id="map" aria-label="散歩地図"></div>
+      <div id="map" aria-label="移動地図"></div>
 
-      <div class="map-legend" aria-label="訪問回数の色">
-        <span style="--level-color:#7dd3fc">1</span>
-        <span style="--level-color:#2563eb">2</span>
-        <span style="--level-color:#22c55e">5</span>
-        <span style="--level-color:#facc15">10</span>
-        <span style="--level-color:#f97316">20+</span>
+      <div class="map-mode-switch" aria-label="表示する移動モード">
+        ${TRAVEL_MODES.map((mode) => {
+          const config = getTravelModeConfig(mode);
+          return `<button type="button" data-map-mode="${mode}" aria-pressed="false"><span aria-hidden="true">${config.icon}</span>${config.shortLabel}</button>`;
+        }).join("")}
       </div>
 
-      <nav class="bottom-controls" aria-label="散歩操作">
+      <div class="map-legend" aria-label="訪問回数の色">
+        <span style="--level-opacity:.28">1</span>
+        <span style="--level-opacity:.38">2</span>
+        <span style="--level-opacity:.48">5</span>
+        <span style="--level-opacity:.58">10</span>
+        <span style="--level-opacity:.7">20+</span>
+      </div>
+
+      <nav class="bottom-controls" aria-label="移動記録の操作">
         <button id="trackingButton" class="control-button primary" type="button"></button>
         <button id="cameraButton" class="control-button" type="button">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.2 4 7.8 6H5a3 3 0 0 0-3 3v8a3 3 0 0 0 3 3h14a3 3 0 0 0 3-3V9a3 3 0 0 0-3-3h-2.8l-1.4-2H9.2ZM12 17a4 4 0 1 1 0-8 4 4 0 0 1 0 8Zm0-1.8a2.2 2.2 0 1 0 0-4.4 2.2 2.2 0 0 0 0 4.4Z"/></svg>
@@ -514,10 +592,26 @@ function renderAppShell(): void {
       <input id="cameraInput" type="file" accept="image/*" hidden />
       <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
+      <dialog id="travelModeDialog" class="modal travel-mode-modal">
+        <div class="modal-card">
+          <div class="modal-heading">
+            <div><p class="eyebrow">TRAVEL MODE</p><h2>移動モードを選択</h2></div>
+          </div>
+          <div class="travel-mode-options">
+            ${renderTravelModeOptions()}
+          </div>
+          <p class="travel-mode-note">記録中はモードを変更できません。</p>
+          <div class="modal-actions">
+            <button id="travelModeCancelButton" class="secondary-button" type="button">キャンセル</button>
+            <button id="travelModeConfirmButton" class="save-button" type="button">このモードで開始</button>
+          </div>
+        </div>
+      </dialog>
+
       <dialog id="photoCommentDialog" class="modal">
         <div class="modal-card">
           <div class="modal-heading">
-            <div><p class="eyebrow">PHOTO NOTE</p><h2>散歩のひとこと</h2></div>
+            <div><p class="eyebrow">PHOTO NOTE</p><h2>移動中のひとこと</h2></div>
           </div>
           <img id="photoPreview" class="photo-preview" alt="選択した写真のプレビュー" />
           <label class="comment-label" for="photoComment">コメント</label>
@@ -533,11 +627,12 @@ function renderAppShell(): void {
         <div class="history-shell">
           <section id="historyListView" class="history-view">
             <header class="history-header">
-              <div><p class="eyebrow">WALK ARCHIVE</p><h2>散歩の記録</h2></div>
+              <div><p class="eyebrow">TRAVEL ARCHIVE</p><h2>移動の記録</h2></div>
               <button id="historyCloseButton" class="icon-close-button" type="button" aria-label="閉じる">×</button>
             </header>
             <div class="archive-filter-bar">
-              <select id="historyTagFilter" aria-label="タグで散歩を絞り込む"></select>
+              <select id="historyModeFilter" aria-label="移動モードで記録を絞り込む">${renderTravelModeFilterOptions()}</select>
+              <select id="historyTagFilter" aria-label="タグで移動記録を絞り込む"></select>
               <button id="historyFavoriteFilter" class="archive-favorite-filter" type="button" aria-pressed="false">☆ お気に入り</button>
             </div>
             <div id="historyList" class="history-list"></div>
@@ -550,14 +645,14 @@ function renderAppShell(): void {
               </button>
               <div class="history-detail-heading">
                 <p id="historyDetailDate"></p>
-                <span id="historyDetailTime"></span>
+                <span><span id="historyDetailMode"></span> ・ <span id="historyDetailTime"></span></span>
               </div>
             </header>
 
             <div class="history-metrics">
               <div><strong id="historyDetailDuration">0分</strong><span>時間</span></div>
               <div><strong id="historyDetailDistance">0m</strong><span>距離</span></div>
-              <div><strong id="historyDetailCells">0マス</strong><span>歩いたマス</span></div>
+              <div><strong id="historyDetailCells">0マス</strong><span>通ったマス</span></div>
             </div>
 
             <div class="archive-metadata-editor">
@@ -570,12 +665,12 @@ function renderAppShell(): void {
             </div>
 
             <div class="history-map-wrap">
-              <div id="historyMap" aria-label="この散歩のルート"></div>
+              <div id="historyMap" aria-label="この移動のルート"></div>
               <p id="historyEmptyRoute" class="history-empty-route" hidden>表示できるGPSルートがありません</p>
             </div>
 
             <section id="historyPhotoSection" class="history-photo-section" hidden>
-              <h3>この散歩の写真</h3>
+              <h3>この移動の写真</h3>
               <div id="historyPhotoGrid" class="history-photo-grid"></div>
             </section>
           </section>
@@ -621,7 +716,7 @@ function renderAppShell(): void {
 
       <dialog id="photoDetailDialog" class="modal">
         <div class="modal-card detail-card">
-          <img id="detailPhoto" class="detail-photo" alt="散歩中に撮影した写真" />
+          <img id="detailPhoto" class="detail-photo" alt="移動中に撮影した写真" />
           <div class="detail-copy">
             <p id="detailComment" class="detail-comment"></p>
             <time id="detailDate" class="detail-date"></time>
